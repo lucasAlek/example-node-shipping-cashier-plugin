@@ -17,7 +17,7 @@ app.get('/widget', (req, res) => {
 
 // request expects two different query string parameters,
 //  platform: e.g. shopify
-//  shop: e.g. example.myshopify.com
+//  shop: e.g. example.myshopify.com or store-wxyz.mybigcommerce.com
 app.get('/oauth/redirect', (req, res) => {
     const domain = process.env.CASHIER_DOMAIN;
     const client_id = process.env.CASHIER_CLIENT_ID;
@@ -33,6 +33,9 @@ app.get('/oauth/redirect', (req, res) => {
         'add_payments',
         'modify_cart',
         'provide_shipping_rates',
+        'read_shipping_lines',
+        'read_orders',
+        'modify_shipping_address'
     ].join(' ');
 
     res.redirect(
@@ -42,7 +45,7 @@ app.get('/oauth/redirect', (req, res) => {
 
 // request expects three different query string parameters,
 //  platform: e.g. shopify
-//  shop: e.g. example.myshopify.com
+//  shop: e.g. example.myshopify.com or store-wxyz.mybigcommerce.com
 //  code: a temporary authorization code which you can exchange for a Cashier access token
 app.get('/oauth/authorize', (req, res) => {
     const platform = req.query.platform;
@@ -133,19 +136,81 @@ app.post('/settings', verify_signature, (req, res) => {
 });
 
 app.post('/shipping', verify_signature, (req, res) => {
-    res.send({
-        name: 'My Custom Shipping Override',
-        rates: [
-            {
-                line_text: 'EXTERNAL ECONOMY SHIPPING 5-7 BUSINESS DAYS',
-                value: 11.5,
+    console.log(req.body);
+    const platform = req.query.platform;
+    console.log(req.query)
+    const shop = req.query.shop;
+
+    if (
+        typeof platform === 'undefined' ||
+        typeof shop === 'undefined'
+    ) {
+        res.status(400).send('Error: "shop" is required');
+    }
+
+    const domain = process.env.CASHIER_DOMAIN;
+    const requestData = {
+                   
+        "order": {
+            "customer": {
+                "shipping_address": {
+                    "address": req.body.destination_address.address1,
+                        "city": req.body.destination_address.city,
+                        "country_code": req.body.destination_address.country_code,
+                        "province_code": req.body.destination_address.province_code,
+                        "postal_code": req.body.destination_address.postal_code
+                }
             },
-            {
-                line_text: 'EXTERNAL SHIPPING SOURCE OVERNIGHT EXPRESS',
-                value: 15.5,
-            },
-        ],
-    });
+            "items": [
+                {
+                    "price": 500,
+                    "quantity": 1,
+                    "grams": 250
+                },
+                {
+                    "price": 300,
+                    "quantity": 2,
+                    "grams": 150
+                }
+            ]
+        }
+    };
+
+    request({
+        url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
+        method: 'POST',
+        headers: {
+            "X-Bold-Checkout-Access-Token": "ih3ohfqUlcTMzxJG8cjgvyVwuJsn7olmzDkDdUjTcCn4NZPT1O1ne9UUqPiWGkC1",
+        },
+        json: requestData,
+    })
+        .then(resp => {
+            //TODO: get the rates form checkout and set them in the override along with my own rate
+            console.log(resp);
+            var shipping_lines = resp.shipping_lines; 
+            var numberLines = Object.keys(shipping_lines).length;
+            var rates = new Array(); 
+            
+            var i; 
+            for( i= 0; i < numberLines; i++){
+                rates.push({
+                    "line_text" : shipping_lines[i].shipping.name,
+                    "value": (shipping_lines[i].shipping.price/100)
+                });
+            }
+            //console.log(rates); 
+
+            res.send({
+                name: 'My Custom Shipping Override',
+                rates:  rates,                
+            });
+        })
+        .catch(err => {
+            //TODO: report error
+            console.log(err);
+            res.status(500).end();
+        });
+    
 });
 
 app.post('/payment/preauth', verify_signature, (req, res) => {
@@ -180,6 +245,8 @@ function handleEvent(req) {
     switch (req.body.event) {
         case 'initialize_checkout':
             return handleInitializeCheckout(req);
+        case 'received_shipping_lines':
+            return handleReceivedShiipingLines(req);
         case 'app_hook':
             return handleAppHook(req);
         default:
@@ -189,37 +256,37 @@ function handleEvent(req) {
 
 function handleInitializeCheckout(req) {
     return [
-        {
-            type: 'APP_UPDATE_WIDGET',
-            data: {
-                name: 'my_payments_widget',
-                type: 'iframe',
-                position: 'payments',
-                source: process.env.APP_URL + '/widget',
-                frame_origin: process.env.APP_URL,
-            },
-        },
-        {
-            type: 'APP_UPDATE_WIDGET',
-            data: {
-                name: 'my_discount_widget',
-                type: 'app_hook',
-                position: 'discount',
-                text: 'Discount 5%',
-                icon: 'https://via.placeholder.com/50x50.png',
-                click_hook: 'apply_discount',
-            },
-        },
-        {
-            type: 'APP_UPDATE_WIDGET',
-            data: {
-                name: 'my_payment_method',
-                type: 'app_hook',
-                position: 'payment_gateway',
-                text: 'Pay via the honor system',
-                click_hook: 'add_payment',
-            },
-        },
+    //     {
+    //         type: 'APP_UPDATE_WIDGET',
+    //         data: {
+    //             name: 'my_payments_widget',
+    //             type: 'iframe',
+    //             position: 'payments',
+    //             source: process.env.APP_URL + '/widget',
+    //             frame_origin: process.env.APP_URL,
+    //         },
+    //     },
+    //     {
+    //         type: 'APP_UPDATE_WIDGET',
+    //         data: {
+    //             name: 'my_discount_widget',
+    //             type: 'app_hook',
+    //             position: 'discount',
+    //             text: 'Discount 5%',
+    //             icon: 'https://via.placeholder.com/50x50.png',
+    //             click_hook: 'apply_discount',
+    //         },
+    //     },
+    //     {
+    //         type: 'APP_UPDATE_WIDGET',
+    //         data: {
+    //             name: 'my_payment_method',
+    //             type: 'app_hook',
+    //             position: 'payment_gateway',
+    //             text: 'Pay via the honor system',
+    //             click_hook: 'add_payment',
+    //         },
+    //     },
         {
             type: 'OVERRIDE_SHIPPING',
             data: {
@@ -312,64 +379,16 @@ function handleSettingsPage(req) {
     };
 }
 
-function handleReceiveUserSettings(req) {
-    console.log(req.body);
+function handleReceivedShiipingLines(req) {
+    console.log("shipping lines Received " , JSON.parse(req.body));
 
     //Save user settings to DB
 }
 
 function handleAppHook(req) {
-    switch (req.body.properties.hook) {
-        case 'apply_discount':
-            return [
-                {
-                    type: 'DISCOUNT_CART',
-                    data: {
-                        discountPercentage: 5,
-                        transformationMessage: 'Money saved',
-                    },
-                },
-                {
-                    type: 'APP_UPDATE_WIDGET',
-                    data: {
-                        name: 'my_discount_widget',
-                        type: 'app_hook',
-                        position: 'discount',
-                        text: "You're welcome",
-                        click_hook: 'already_used',
-                        icon: 'https://via.placeholder.com/50x50.png',
-                    },
-                },
-            ];
-        case 'already_used':
-            return [
-                {
-                    type: 'APP_UPDATE_WIDGET',
-                    data: {
-                        name: 'my_discount_widget',
-                        type: 'app_hook',
-                        position: 'discount',
-                        text: "You've already used the discount",
-                        click_hook: 'already_used',
-                        icon: 'https://via.placeholder.com/50x50.png',
-                    },
-                },
-            ];
-        case 'add_payment':
-            return [
-                {
-                    type: 'ADD_PAYMENT',
-                    data: {
-                        currency: req.body.order.currency,
-                        value: req.body.order.order_total,
-                        line_text: 'Payment via honor system',
-                        gateway_name: 'Honor System',
-                    },
-                },
-            ];
-        default:
-            return [];
-    }
+    // switch (req.body.properties.hook) {
+    // }
+
 }
 
 module.exports = app;
