@@ -34,6 +34,7 @@ app.get('/oauth/redirect', (req, res) => {
         'modify_cart',
         'provide_shipping_rates',
         'read_shipping_lines',
+        'modify_shipping',
         'read_orders',
         'modify_shipping_address'
     ].join(' ');
@@ -135,11 +136,32 @@ app.post('/settings', verify_signature, (req, res) => {
     });
 });
 
+// When a shipping override triggered by the plugin cashier will hit this endpoint. 
+// Cashier sends the source, destination address and current cart.
 app.post('/shipping', verify_signature, (req, res) => {
-    console.log(req.body);
+    //console.log(req.body);
+    console.log("*** new order ***")
     const platform = req.query.platform;
-    console.log(req.query)
     const shop = req.query.shop;
+    var numberItems = Object.keys(req.body.cart).length;
+    var items = new Array(); 
+    console.log(req.body.cart);
+    console.log(numberItems);
+
+    // gather all the cart items
+    var x; 
+    for (x= 0; x < numberItems ; x++){
+        console.log(req.body.cart[x].title);
+        items.push({
+            "price": req.body.cart[x].price,
+            "quantity": req.body.cart[x].quantity,
+            "grams": req.body.cart[x].weight
+        });
+        // console.log(x);
+        
+        
+    }
+    // console.log(items);
 
     if (
         typeof platform === 'undefined' ||
@@ -149,6 +171,7 @@ app.post('/shipping', verify_signature, (req, res) => {
     }
 
     const domain = process.env.CASHIER_DOMAIN;
+    // set the customer address
     const requestData = {
                    
         "order": {
@@ -161,21 +184,11 @@ app.post('/shipping', verify_signature, (req, res) => {
                         "postal_code": req.body.destination_address.postal_code
                 }
             },
-            "items": [
-                {
-                    "price": 500,
-                    "quantity": 1,
-                    "grams": 250
-                },
-                {
-                    "price": 300,
-                    "quantity": 2,
-                    "grams": 150
-                }
-            ]
+            "items": items,
         }
     };
 
+    // request to bold checkout for the shipping rates that would appy for this order
     request({
         url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
         method: 'POST',
@@ -186,11 +199,12 @@ app.post('/shipping', verify_signature, (req, res) => {
     })
         .then(resp => {
             //TODO: get the rates form checkout and set them in the override along with my own rate
-            console.log(resp);
+            //console.log(resp);
             var shipping_lines = resp.shipping_lines; 
             var numberLines = Object.keys(shipping_lines).length;
             var rates = new Array(); 
             
+            // get the rates that where fetched from checkout and foamat them for shipping override. 
             var i; 
             for( i= 0; i < numberLines; i++){
                 rates.push({
@@ -198,8 +212,7 @@ app.post('/shipping', verify_signature, (req, res) => {
                     "value": (shipping_lines[i].shipping.price/100)
                 });
             }
-            //console.log(rates); 
-
+            // sumit the over ride. 
             res.send({
                 name: 'My Custom Shipping Override',
                 rates:  rates,                
@@ -293,6 +306,16 @@ function handleInitializeCheckout(req) {
                 url: process.env.APP_URL + '/shipping',
             },
         },
+        // {
+        //     type: "FLAG_ORDER_AS_BOPIS",
+        //     data: {
+        //         flag_order_as_bopis: true,
+        //         hidden_sections: {
+        //             shipping_address: true,
+        //             saved_addresses: true
+        //         }
+        //     }
+        // },
     ];
 }
 
@@ -380,8 +403,6 @@ function handleSettingsPage(req) {
 }
 
 function handleReceivedShiipingLines(req) {
-    console.log("shipping lines Received " , JSON.parse(req.body));
-
     //Save user settings to DB
 }
 
