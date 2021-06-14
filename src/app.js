@@ -2,10 +2,32 @@ const bodyParser = require('body-parser');
 const express = require('express');
 const request = require('request-promise');
 const { verify_signature, log } = require('./middleware');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 
 app.use(log, bodyParser.json());
+
+let db = new sqlite3.Database('../sample_app.db',(err) => {
+    if (err) {
+        return console.error(err.message);
+    }
+    console.log("Connected to the sample_app.db SQlite database.");
+});
+
+db.close((err) => {
+    if (err) {
+      return console.error(err.message);
+    }
+    console.log('Close the database connection.');
+  });
+
+// connection.query('SELECT 1 + 1 AS solution', function (error, results, fields) {
+//   if (error) throw error;
+//   console.log('The solution is: ', results[0].solution);
+// });
+
+// connection.end();
 
 app.get('/', (req, res) => {
     res.send('Hello World!');
@@ -36,7 +58,8 @@ app.get('/oauth/redirect', (req, res) => {
         'read_shipping_lines',
         'modify_shipping',
         'read_orders',
-        'modify_shipping_address'
+        'modify_shipping_address',
+        'read_shop_settings'
     ].join(' ');
 
     res.redirect(
@@ -89,6 +112,10 @@ app.get('/oauth/authorize', (req, res) => {
         });
 });
 
+app.post('/orderWebhook', (req,res) => {
+    //console.log(req.body);
+}); 
+
 app.post('/oauth/uninstalled', verify_signature, (req, res) => {
     const platform = req.query.platform;
     const shop = req.query.shop;
@@ -139,29 +166,10 @@ app.post('/settings', verify_signature, (req, res) => {
 // When a shipping override triggered by the plugin cashier will hit this endpoint. 
 // Cashier sends the source, destination address and current cart.
 app.post('/shipping', verify_signature, (req, res) => {
-    //console.log(req.body);
-    console.log("*** new order ***")
+
     const platform = req.query.platform;
     const shop = req.query.shop;
-    var numberItems = Object.keys(req.body.cart).length;
-    var items = new Array(); 
-    console.log(req.body.cart);
-    console.log(numberItems);
-
-    // gather all the cart items
-    var x; 
-    for (x= 0; x < numberItems ; x++){
-        console.log(req.body.cart[x].title);
-        items.push({
-            "price": req.body.cart[x].price,
-            "quantity": req.body.cart[x].quantity,
-            "grams": req.body.cart[x].weight
-        });
-        // console.log(x);
-        
-        
-    }
-    // console.log(items);
+    const domain = process.env.CASHIER_DOMAIN;
 
     if (
         typeof platform === 'undefined' ||
@@ -170,60 +178,122 @@ app.post('/shipping', verify_signature, (req, res) => {
         res.status(400).send('Error: "shop" is required');
     }
 
-    const domain = process.env.CASHIER_DOMAIN;
-    // set the customer address
-    const requestData = {
-                   
-        "order": {
-            "customer": {
-                "shipping_address": {
-                    "address": req.body.destination_address.address1,
-                        "city": req.body.destination_address.city,
-                        "country_code": req.body.destination_address.country_code,
-                        "province_code": req.body.destination_address.province_code,
-                        "postal_code": req.body.destination_address.postal_code
-                }
-            },
-            "items": items,
-        }
-    };
+    var numberItems = Object.keys(req.body.cart).length;
+    var items = new Array(); 
+    var isbopis = false;
 
-    // request to bold checkout for the shipping rates that would appy for this order
-    request({
-        url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
-        method: 'POST',
-        headers: {
-            "X-Bold-Checkout-Access-Token": "ih3ohfqUlcTMzxJG8cjgvyVwuJsn7olmzDkDdUjTcCn4NZPT1O1ne9UUqPiWGkC1",
-        },
-        json: requestData,
-    })
-        .then(resp => {
-            //TODO: get the rates form checkout and set them in the override along with my own rate
-            //console.log(resp);
-            var shipping_lines = resp.shipping_lines; 
-            var numberLines = Object.keys(shipping_lines).length;
-            var rates = new Array(); 
-            
-            // get the rates that where fetched from checkout and foamat them for shipping override. 
-            var i; 
-            for( i= 0; i < numberLines; i++){
-                rates.push({
-                    "line_text" : shipping_lines[i].shipping.name,
-                    "value": (shipping_lines[i].shipping.price/100)
-                });
+    // console.log(req.body.cart);
+    // console.log(numberItems);
+        // gather all the cart items
+        var x; 
+        for (x= 0; x < numberItems ; x++){
+            //console.log(req.body.cart[x].title);
+            if(req.body.cart[x].title.includes("pick up")){
+                isbopis = true; 
             }
-            // sumit the over ride. 
-            res.send({
-                name: 'My Custom Shipping Override',
-                rates:  rates,                
+            items.push({
+                "price": req.body.cart[x].price,
+                "quantity": req.body.cart[x].quantity,
+                "grams": req.body.cart[x].weight
             });
+            // console.log(x); 
+        }
+        // console.log(items);
+
+        // set the customer address
+        const requestData = {
+                   
+            "order": {
+                "customer": {
+                    "shipping_address": {
+                        "address": req.body.destination_address.address1,
+                            "city": req.body.destination_address.city,
+                            "country_code": req.body.destination_address.country_code,
+                            "province_code": req.body.destination_address.province_code,
+                            "postal_code": req.body.destination_address.postal_code
+                    }
+                },
+                "items": items,
+            }
+        };
+
+        if(!isbopis){
+                   // request to bold checkout for the shipping rates that would appy for this order
+                   console.log(platform);
+                   console.log(shop);
+
+        request({
+            url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
+            method: 'POST',
+            headers: {
+                "X-Bold-Checkout-Access-Token": "uqncurJ9UOV1ePVzY5Z562PkkRmz5NT8SDskShDVLZ8GVNaG04Sxn52IWQuvP1Jg",
+            },
+            json: requestData,
         })
-        .catch(err => {
-            //TODO: report error
-            console.log(err);
-            res.status(500).end();
-        });
-    
+            .then(resp => {
+                //TODO: get the rates form checkout and set them in the override along with my own rate
+                //console.log(resp);
+                var shipping_lines = resp.shipping_lines; 
+                var numberLines = Object.keys(shipping_lines).length;
+                var rates = new Array(); 
+                
+                // get the rates that where fetched from checkout and foamat them for shipping override. 
+                var i; 
+                for( i= 0; i < numberLines; i++){
+                    rates.push({
+                        "line_text" : shipping_lines[i].shipping.name,
+                        "value": (shipping_lines[i].shipping.price/100)
+                    });
+                }
+                // sumit the over ride. 
+                res.send({
+                    name: 'My Custom Shipping Override',
+                    rates:  rates,                
+                });
+            })
+            .catch(err => {
+                //TODO: report error
+                console.log(err);
+                res.status(500).end();
+            });    
+        }else{
+            locations = new Array();
+            var location_rates = new Array();
+            var lat = 49.801908;
+            var long = -97.147752; 
+
+            //TODO: get the locatoins form NASA fallen metorite open API checkout and set them as the store pick up override
+            request({
+                url: `https://data.nasa.gov/resource/gh4g-9sfh.json?$where=within_circle(GeoLocation,${lat},${long}, 100000)`,
+                method: 'GET',
+                headers: {
+                    "X-App-Token": process.env.NASA_ACESS_TOKEN,
+                },
+            })
+            .then(resp => {
+                location = resp;
+                location = JSON.parse(location); 
+                                
+                var i; 
+                for( i = 0; i < location.length; i++){
+                    location_rates.push({
+                        "line_text" : location[i].name,
+                        "value": 0
+                    });
+                }
+                console.log(location_rates);
+                res.send({
+                    name: 'Pick up: ',
+                    rates:  location_rates,                
+                }); 
+            })
+            .catch(err => {
+                //TODO: report error
+                console.log(err);
+                res.status(500).end();
+            }); 
+        }        
+ 
 });
 
 app.post('/payment/preauth', verify_signature, (req, res) => {
@@ -262,13 +332,77 @@ function handleEvent(req) {
             return handleReceivedShiipingLines(req);
         case 'app_hook':
             return handleAppHook(req);
+        case 'order_submitted':
+            //console.log(req.body.order.payments); 
         default:
             return [];
     }
 }
 
 function handleInitializeCheckout(req) {
-    return [
+    //console.log(req.body.cart.line_items);
+    var isbopis = false;
+
+    // console.log(" ** checkoing for bopis **")
+    // console.log(req.body);
+    req.body.cart.line_items.forEach(function(item) {
+        // console.log(item)
+        if (item.title.includes("pick up")){
+            isbopis = true; 
+        }
+      }); 
+    // console.log(isbopis); 
+    if (isbopis){
+        isbopis = false;
+        return[
+            {
+                type: "FLAG_ORDER_AS_BOPIS",
+                data: {
+                    flag_order_as_bopis: true,
+                    hidden_sections: {
+                        shipping_address: true,
+                        saved_addresses: true
+                    },
+                },
+            },
+            {
+                type: 'OVERRIDE_SHIPPING',
+                data: {
+                    url: process.env.APP_URL + '/shipping',
+                },
+            },
+            {
+                type: "CHANGE_SHIPPING_ADDRESS",
+                data: {
+                    first_name: "John",
+                    last_name: "Doe",
+                    company: "Bold Commerce Ltd",
+                    address: "50 Fultz Blvd",
+                    address2: "Another Address Line",
+                    phone: "204-678-9087",
+                    city: "Winnipeg",
+                    province: "Manitoba",
+                    province_code: "MB",
+                    country: "Canada",
+                    country_code: "CA",
+                    postal_code: "R3Y 0L6",
+                    update_billing: true,
+                    different_billing_address: true
+                },
+            },
+        ];
+    }else{  
+        return[
+            {
+                type: 'OVERRIDE_SHIPPING',
+                data: {
+                    url: process.env.APP_URL + '/shipping',
+                },
+            },
+        ];
+    }               
+    
+    // return [
     //     {
     //         type: 'APP_UPDATE_WIDGET',
     //         data: {
@@ -300,12 +434,6 @@ function handleInitializeCheckout(req) {
     //             click_hook: 'add_payment',
     //         },
     //     },
-        {
-            type: 'OVERRIDE_SHIPPING',
-            data: {
-                url: process.env.APP_URL + '/shipping',
-            },
-        },
         // {
         //     type: "FLAG_ORDER_AS_BOPIS",
         //     data: {
@@ -316,7 +444,13 @@ function handleInitializeCheckout(req) {
         //         }
         //     }
         // },
-    ];
+        // {
+        //     type: 'OVERRIDE_SHIPPING',
+        //     data: {
+        //         url: process.env.APP_URL + '/shipping',
+        //     },
+        // },
+    // ];
 }
 
 function handleSettingsPage(req) {
