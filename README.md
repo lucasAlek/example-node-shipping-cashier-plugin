@@ -2,7 +2,7 @@
 
 ## Getting started
 
-1. Obtain Cashier client credentials (contact [partners@boldcommerce.com](mailto:partners@boldcommerce.com))
+1. Obtain Cashier client credentials (contact [partners@boldcommerce.com](mailto:partners@boldcommerce.com)) and https://data.nasa.gov/Space-Science/Meteorite-Landings/gh4g-9sfh for a open api key
 
 2. Clone this repository
 

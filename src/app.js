@@ -2,32 +2,10 @@ const bodyParser = require('body-parser');
 const express = require('express');
 const request = require('request-promise');
 const { verify_signature, log } = require('./middleware');
-const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 
 app.use(log, bodyParser.json());
-
-let db = new sqlite3.Database('../sample_app.db',(err) => {
-    if (err) {
-        return console.error(err.message);
-    }
-    console.log("Connected to the sample_app.db SQlite database.");
-});
-
-db.close((err) => {
-    if (err) {
-      return console.error(err.message);
-    }
-    console.log('Close the database connection.');
-  });
-
-// connection.query('SELECT 1 + 1 AS solution', function (error, results, fields) {
-//   if (error) throw error;
-//   console.log('The solution is: ', results[0].solution);
-// });
-
-// connection.end();
 
 app.get('/', (req, res) => {
     res.send('Hello World!');
@@ -113,7 +91,9 @@ app.get('/oauth/authorize', (req, res) => {
 });
 
 app.post('/orderWebhook', (req,res) => {
-    //console.log(req.body);
+    //console.log("\n** orderwebhook **")
+    // order confromation check goes here
+    
 }); 
 
 app.post('/oauth/uninstalled', verify_signature, (req, res) => {
@@ -182,27 +162,23 @@ app.post('/shipping', verify_signature, (req, res) => {
     var items = new Array(); 
     var isbopis = false;
 
-    // console.log(req.body.cart);
-    // console.log(numberItems);
-        // gather all the cart items
-        var x; 
-        for (x= 0; x < numberItems ; x++){
-            //console.log(req.body.cart[x].title);
-            if(req.body.cart[x].title.includes("pick up")){
-                isbopis = true; 
-            }
-            items.push({
-                "price": req.body.cart[x].price,
-                "quantity": req.body.cart[x].quantity,
-                "grams": req.body.cart[x].weight
-            });
-            // console.log(x); 
+    // gather all the cart items
+    var x; 
+    for (x= 0; x < numberItems ; x++){
+        if(req.body.cart[x].title.includes("pick up")){
+            isbopis = true; 
         }
-        // console.log(items);
+        items.push({
+            "price": req.body.cart[x].price,
+            "quantity": req.body.cart[x].quantity,
+            "grams": req.body.cart[x].weight
+        }); 
+    }
 
-        // set the customer address
+    if(!isbopis){
+    // set the customer address
         const requestData = {
-                   
+                
             "order": {
                 "customer": {
                     "shipping_address": {
@@ -217,11 +193,7 @@ app.post('/shipping', verify_signature, (req, res) => {
             }
         };
 
-        if(!isbopis){
-                   // request to bold checkout for the shipping rates that would appy for this order
-                   console.log(platform);
-                   console.log(shop);
-
+        // request to bold checkout for the shipping rates that would appy for this order
         request({
             url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
             method: 'POST',
@@ -230,98 +202,71 @@ app.post('/shipping', verify_signature, (req, res) => {
             },
             json: requestData,
         })
-            .then(resp => {
-                //TODO: get the rates form checkout and set them in the override along with my own rate
-                //console.log(resp);
-                var shipping_lines = resp.shipping_lines; 
-                var numberLines = Object.keys(shipping_lines).length;
-                var rates = new Array(); 
-                
-                // get the rates that where fetched from checkout and foamat them for shipping override. 
-                var i; 
-                for( i= 0; i < numberLines; i++){
-                    rates.push({
-                        "line_text" : shipping_lines[i].shipping.name,
-                        "value": (shipping_lines[i].shipping.price/100)
-                    });
-                }
-                // sumit the over ride. 
-                res.send({
-                    name: 'My Custom Shipping Override',
-                    rates:  rates,                
+        .then(resp => {
+            //TODO: get the rates form checkout and set them in the override along with my own rate
+            var shipping_lines = resp.shipping_lines; 
+            var numberLines = Object.keys(shipping_lines).length;
+            var rates = new Array(); 
+            // get the rates that where fetched from checkout and foamat them for shipping override. 
+            var i; 
+            for( i= 0; i < numberLines; i++){
+                rates.push({
+                    "line_text" : shipping_lines[i].shipping.name,
+                    "value": (shipping_lines[i].shipping.price/100)
                 });
-            })
-            .catch(err => {
-                //TODO: report error
-                console.log(err);
-                res.status(500).end();
-            });    
-        }else{
-            locations = new Array();
-            var location_rates = new Array();
-            var lat = 49.801908;
-            var long = -97.147752; 
+            }
+            // submit the override to checkout. 
+            res.send({
+                name: 'My Custom Shipping Override',
+                rates:  rates,                
+            });
+        })
+        .catch(err => {
+            //TODO: report error
+            console.log(err);
+            res.status(500).end();
+        });    
+    }else{
+        locations = new Array();
+        var location_rates = new Array();
 
-            //TODO: get the locatoins form NASA fallen metorite open API checkout and set them as the store pick up override
-            request({
-                url: `https://data.nasa.gov/resource/gh4g-9sfh.json?$where=within_circle(GeoLocation,${lat},${long}, 100000)`,
-                method: 'GET',
-                headers: {
-                    "X-App-Token": process.env.NASA_ACESS_TOKEN,
-                },
-            })
-            .then(resp => {
-                location = resp;
-                location = JSON.parse(location); 
-                                
-                var i; 
-                for( i = 0; i < location.length; i++){
-                    location_rates.push({
-                        "line_text" : location[i].name,
-                        "value": 0
-                    });
-                }
-                console.log(location_rates);
-                res.send({
-                    name: 'Pick up: ',
-                    rates:  location_rates,                
-                }); 
-            })
-            .catch(err => {
-                //TODO: report error
-                console.log(err);
-                res.status(500).end();
+        //hard coded the lat long set for downtown austin texes 
+        var lat = 30.268466;
+        var long = -97.742811; 
+
+        //TODO: get the locatoins form NASA fallen metorite open API checkout and set them as the store pick up override
+        //radius is set to 100,000M or 100KM 
+        request({
+            url: `https://data.nasa.gov/resource/gh4g-9sfh.json?$where=within_circle(GeoLocation,${lat},${long}, 100000)`,
+            method: 'GET',
+            headers: {
+                "X-App-Token": process.env.NASA_ACESS_TOKEN,
+            },
+        })
+        .then(resp => {
+            // racived rates need to formated as Json, and add each one as possible rates with a $0 value
+            location = resp;
+            location = JSON.parse(location); 
+                            
+            var i; 
+            for( i = 0; i < location.length; i++){
+                location_rates.push({
+                    "line_text" : location[i].name,
+                    "value": 0
+                });
+            }
+            res.send({
+                name: 'Pick up: ',
+                rates:  location_rates,                
             }); 
-        }        
- 
-});
+        })
+        .catch(err => {
+            //TODO: report error
+            console.log(err);
+            res.status(500).end();
+        }); 
+    }        
 
-app.post('/payment/preauth', verify_signature, (req, res) => {
-    if (req.body.payment.value >= 100000) {
-        res.send({
-            success: false,
-            error: 'payment exceeds maximum value',
-        });
-    } else {
-        res.send({
-            success: true,
-            reference_id: 'payment-12345',
-        });
-    }
-});
-
-app.post('/payment/capture', verify_signature, (req, res) => {
-    res.send({
-        success: true,
-        reference_id: 'payment-12345',
-    });
-});
-
-app.post('/payment/refund', verify_signature, (req, res) => {
-    res.send({
-        success: true,
-        reference_id: 'payment-12345',
-    });
 });
 
 function handleEvent(req) {
@@ -330,32 +275,34 @@ function handleEvent(req) {
             return handleInitializeCheckout(req);
         case 'received_shipping_lines':
             return handleReceivedShiipingLines(req);
-        case 'app_hook':
-            return handleAppHook(req);
         case 'order_submitted':
-            //console.log(req.body.order.payments); 
+            return handleOrderSubmitted(req);
         default:
             return [];
     }
 }
 
 function handleInitializeCheckout(req) {
-    //console.log(req.body.cart.line_items);
     var isbopis = false;
 
-    // console.log(" ** checkoing for bopis **")
-    // console.log(req.body);
     req.body.cart.line_items.forEach(function(item) {
-        // console.log(item)
         if (item.title.includes("pick up")){
             isbopis = true; 
         }
-      }); 
-    // console.log(isbopis); 
+    }); 
+    /* there are two differt order styles that we are handling here.
+    
+    1. bpois
+    A bopis order requires the bopis flag be set with the sectoins that ate to be hidden, a deffientions of rates are to be overwritten and what the pick up location is 
+
+    2.standared order
+    We are only going to trigger a shipping rate override becuse we are againa going to replace the Checkout supplied shipping rates with our own
+    */
     if (isbopis){
         isbopis = false;
         return[
             {
+                //bopis flag
                 type: "FLAG_ORDER_AS_BOPIS",
                 data: {
                     flag_order_as_bopis: true,
@@ -366,12 +313,14 @@ function handleInitializeCheckout(req) {
                 },
             },
             {
+                //define the rate are to be over written with out own
                 type: 'OVERRIDE_SHIPPING',
                 data: {
                     url: process.env.APP_URL + '/shipping',
                 },
             },
             {
+                //set the pickup location. ( this can be changed later on to suit a user selected location)
                 type: "CHANGE_SHIPPING_ADDRESS",
                 data: {
                     first_name: "John",
@@ -386,7 +335,7 @@ function handleInitializeCheckout(req) {
                     country: "Canada",
                     country_code: "CA",
                     postal_code: "R3Y 0L6",
-                    update_billing: true,
+                    update_billing: false,
                     different_billing_address: true
                 },
             },
@@ -400,62 +349,11 @@ function handleInitializeCheckout(req) {
                 },
             },
         ];
-    }               
-    
-    // return [
-    //     {
-    //         type: 'APP_UPDATE_WIDGET',
-    //         data: {
-    //             name: 'my_payments_widget',
-    //             type: 'iframe',
-    //             position: 'payments',
-    //             source: process.env.APP_URL + '/widget',
-    //             frame_origin: process.env.APP_URL,
-    //         },
-    //     },
-    //     {
-    //         type: 'APP_UPDATE_WIDGET',
-    //         data: {
-    //             name: 'my_discount_widget',
-    //             type: 'app_hook',
-    //             position: 'discount',
-    //             text: 'Discount 5%',
-    //             icon: 'https://via.placeholder.com/50x50.png',
-    //             click_hook: 'apply_discount',
-    //         },
-    //     },
-    //     {
-    //         type: 'APP_UPDATE_WIDGET',
-    //         data: {
-    //             name: 'my_payment_method',
-    //             type: 'app_hook',
-    //             position: 'payment_gateway',
-    //             text: 'Pay via the honor system',
-    //             click_hook: 'add_payment',
-    //         },
-    //     },
-        // {
-        //     type: "FLAG_ORDER_AS_BOPIS",
-        //     data: {
-        //         flag_order_as_bopis: true,
-        //         hidden_sections: {
-        //             shipping_address: true,
-        //             saved_addresses: true
-        //         }
-        //     }
-        // },
-        // {
-        //     type: 'OVERRIDE_SHIPPING',
-        //     data: {
-        //         url: process.env.APP_URL + '/shipping',
-        //     },
-        // },
-    // ];
+    }
 }
 
 function handleSettingsPage(req) {
     //Missing: Load user values from DB, assign to `value` keys
-
     return {
         shortString1: {
             text: 'This is a short string field',
@@ -540,10 +438,8 @@ function handleReceivedShiipingLines(req) {
     //Save user settings to DB
 }
 
-function handleAppHook(req) {
-    // switch (req.body.properties.hook) {
-    // }
-
+function handleOrderSubmitted(req){
+    // check user seleted rate or location
 }
 
 module.exports = app;
