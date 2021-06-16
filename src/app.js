@@ -77,7 +77,7 @@ app.get('/oauth/authorize', (req, res) => {
     })
         .then(resp => {
             //TODO: save access_token in order to perform Cashier API calls
-
+            console.log(resp.access_token); 
             // at this point the app is free to redirect the user wherever it wants
             // this example redirects back into the Cashier admin
             res.redirect(
@@ -197,7 +197,7 @@ app.post('/shipping', verify_signature, (req, res) => {
             url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
             method: 'POST',
             headers: {
-                "X-Bold-Checkout-Access-Token": "uqncurJ9UOV1ePVzY5Z562PkkRmz5NT8SDskShDVLZ8GVNaG04Sxn52IWQuvP1Jg",
+                "X-Bold-Checkout-Access-Token": process.env.Bold_checkout_acccess_token,
             },
             json: requestData,
         })
