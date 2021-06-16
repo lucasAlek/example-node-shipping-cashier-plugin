@@ -29,8 +29,8 @@ app.get('/oauth/redirect', (req, res) => {
         res.status(400).send('Error: "shop" is required');
     }
 
+    //there are a few scops in here that are not needed for the application but are a nice to have. "read_seetings" is the main one
     const scope = [
-        'add_payments',
         'modify_cart',
         'provide_shipping_rates',
         'read_shipping_lines',
@@ -46,7 +46,7 @@ app.get('/oauth/redirect', (req, res) => {
 });
 
 // request expects three different query string parameters,
-//  platform: e.g. shopify
+//  platform: e.g. shopify or bigcommerce 
 //  shop: e.g. example.myshopify.com or store-wxyz.mybigcommerce.com
 //  code: a temporary authorization code which you can exchange for a Cashier access token
 app.get('/oauth/authorize', (req, res) => {
@@ -106,7 +106,6 @@ app.post('/oauth/uninstalled', verify_signature, (req, res) => {
 });
 
 app.post('/cashier/event', verify_signature, (req, res) => {
-    //res.send(req.body.event);
     const actions = handleEvent(req);
 
     res.send({
@@ -293,7 +292,7 @@ function handleInitializeCheckout(req) {
     /* there are two differt order styles that we are handling here.
     
     1. bpois
-    A bopis order requires the bopis flag be set with the sectoins that ate to be hidden, a deffientions of rates are to be overwritten and what the pick up location is 
+    A bopis order requires the bopis flag be set with the sections that are to be hidden, a deffientions of rates are to be overwritten and what the pick up location is 
 
     2.standared order
     We are only going to trigger a shipping rate override becuse we are againa going to replace the Checkout supplied shipping rates with our own
