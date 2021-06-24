@@ -11,10 +11,6 @@ app.get('/', (req, res) => {
     res.send('Hello World!');
 });
 
-app.get('/widget', (req, res) => {
-    res.sendFile('views/widget.html', { root: __dirname });
-});
-
 // request expects two different query string parameters,
 //  platform: e.g. shopify
 //  shop: e.g. example.myshopify.com or store-wxyz.mybigcommerce.com
@@ -31,7 +27,6 @@ app.get('/oauth/redirect', (req, res) => {
 
     //there are a few scops in here that are not needed for the application but are a nice to have. "read_seetings" is the main one
     const scope = [
-        'modify_cart',
         'provide_shipping_rates',
         'read_shipping_lines',
         'modify_shipping',
@@ -91,9 +86,12 @@ app.get('/oauth/authorize', (req, res) => {
 });
 
 app.post('/orderWebhook', (req,res) => {
-    //console.log("\n** orderwebhook **")
-    // order confromation check goes here
-    
+    /* A webhook will be sent to this endpoint when the order is created. 
+    You can use this to confirm any order information. For more info on order webhooks go here:
+    */
+   res.send({
+       success: true,
+   });
 }); 
 
 app.post('/oauth/uninstalled', verify_signature, (req, res) => {
@@ -142,8 +140,8 @@ app.post('/settings', verify_signature, (req, res) => {
     });
 });
 
-// When a shipping override triggered by the plugin cashier will hit this endpoint. 
-// Cashier sends the source, destination address and current cart.
+// When a shipping override is triggered by the plugin checkout will hit this endpoint. 
+// Checkout sends the source, destination address and current cart.
 app.post('/shipping', verify_signature, (req, res) => {
 
     const platform = req.query.platform;
@@ -157,123 +155,33 @@ app.post('/shipping', verify_signature, (req, res) => {
         res.status(400).send('Error: "shop" is required');
     }
 
-    var numberItems = Object.keys(req.body.cart).length;
+    //var numberItems = Object.keys(req.body.cart).length;
     var items = new Array(); 
     var isbopis = false;
 
     // gather all the cart items
-    var x; 
-    for (x= 0; x < numberItems ; x++){
-        if(req.body.cart[x].title.includes("pick up")){
+    req.body.cart.forEach(function(item) {
+        if(item.title.includes("pick up")){
             isbopis = true; 
         }
         items.push({
-            "price": req.body.cart[x].price,
-            "quantity": req.body.cart[x].quantity,
-            "grams": req.body.cart[x].weight
+            "price": item.price,
+            "quantity": item.quantity,
+            "grams": item.weight
         }); 
-    }
-
+    }); 
+    
     if(!isbopis){
-    // set the customer address
-        const requestData = {
-                
-            "order": {
-                "customer": {
-                    "shipping_address": {
-                        "address": req.body.destination_address.address1,
-                            "city": req.body.destination_address.city,
-                            "country_code": req.body.destination_address.country_code,
-                            "province_code": req.body.destination_address.province_code,
-                            "postal_code": req.body.destination_address.postal_code
-                    }
-                },
-                "items": items,
-            }
-        };
-
-        // request to bold checkout for the shipping rates that would appy for this order
-        request({
-            url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
-            method: 'POST',
-            headers: {
-                "X-Bold-Checkout-Access-Token": process.env.Bold_checkout_acccess_token,
-            },
-            json: requestData,
-        })
-        .then(resp => {
-            //TODO: get the rates form checkout and set them in the override along with my own rate
-            var shipping_lines = resp.shipping_lines; 
-            var numberLines = Object.keys(shipping_lines).length;
-            var rates = new Array(); 
-            // get the rates that where fetched from checkout and foamat them for shipping override. 
-            var i; 
-            for( i= 0; i < numberLines; i++){
-                rates.push({
-                    "line_text" : shipping_lines[i].shipping.name,
-                    "value": (shipping_lines[i].shipping.price/100)
-                });
-            }
-            // submit the override to checkout. 
-            res.send({
-                name: 'My Custom Shipping Override',
-                rates:  rates,                
-            });
-        })
-        .catch(err => {
-            //TODO: report error
-            console.log(err);
-            res.status(500).end();
-        });    
+        GetShippingRate(req, items, domain, platform, shop, res);    
     }else{
-        locations = new Array();
-        var location_rates = new Array();
-
-        //hard coded the lat long set for downtown austin texes 
-        var lat = 30.268466;
-        var long = -97.742811; 
-
-        //TODO: get the locatoins form NASA fallen metorite open API checkout and set them as the store pick up override
-        //radius is set to 100,000M or 100KM 
-        request({
-            url: `https://data.nasa.gov/resource/gh4g-9sfh.json?$where=within_circle(GeoLocation,${lat},${long}, 100000)`,
-            method: 'GET',
-            headers: {
-                "X-App-Token": process.env.NASA_ACESS_TOKEN,
-            },
-        })
-        .then(resp => {
-            // racived rates need to formated as Json, and add each one as possible rates with a $0 value
-            location = resp;
-            location = JSON.parse(location); 
-                            
-            var i; 
-            for( i = 0; i < location.length; i++){
-                location_rates.push({
-                    "line_text" : location[i].name,
-                    "value": 0
-                });
-            }
-            res.send({
-                name: 'Pick up: ',
-                rates:  location_rates,                
-            }); 
-        })
-        .catch(err => {
-            //TODO: report error
-            console.log(err);
-            res.status(500).end();
-        }); 
-    }        
-
+        GetBopisRates(res); 
+    }
 });
 
 function handleEvent(req) {
     switch (req.body.event) {
         case 'initialize_checkout':
             return handleInitializeCheckout(req);
-        case 'received_shipping_lines':
-            return handleReceivedShiipingLines(req);
         case 'order_submitted':
             return handleOrderSubmitted(req);
         default:
@@ -292,10 +200,10 @@ function handleInitializeCheckout(req) {
     /* there are two differt order styles that we are handling here.
     
     1. bpois
-    A bopis order requires the bopis flag be set with the sections that are to be hidden, a deffientions of rates are to be overwritten and what the pick up location is 
+    A bopis order requires the bopis flag be set with the sections that are to be hidden. Define the rates that are to be overwritten and what the pick up location is 
 
     2.standared order
-    We are only going to trigger a shipping rate override becuse we are againa going to replace the Checkout supplied shipping rates with our own
+    We are only going to trigger a shipping rate override becuse we are again going to replace the Checkout supplied shipping rates with our own
     */
     if (isbopis){
         isbopis = false;
@@ -312,7 +220,7 @@ function handleInitializeCheckout(req) {
                 },
             },
             {
-                //define the rate are to be over written with out own
+                //define the rates to be over written with out own
                 type: 'OVERRIDE_SHIPPING',
                 data: {
                     url: process.env.APP_URL + '/shipping',
@@ -433,12 +341,100 @@ function handleSettingsPage(req) {
     };
 }
 
-function handleReceivedShiipingLines(req) {
-    //Save user settings to DB
-}
-
 function handleOrderSubmitted(req){
     // check user seleted rate or location
+}
+
+
+function GetBopisRates(res) {
+    locations = new Array();
+    var location_rates = new Array();
+
+    //Hard coded the lat long set for downtown austin texes 
+    var lat = 30.268466;
+    var long = -97.742811;
+
+    //TODO: get the locations from NASA fallen metorite open API and set them as the store pick up shipping lines
+    // Radius is set to 100,000M or 100KM 
+    // This is an example that you would replace with your own locatoin API or hardcoded locations
+    request({
+        url: `https://data.nasa.gov/resource/gh4g-9sfh.json?$where=within_circle(GeoLocation,${lat},${long}, 100000)`,
+        method: 'GET',
+        headers: {
+            "X-App-Token": process.env.NASA_ACCESS_TOKEN,
+        },
+    })
+        .then(resp => {
+            // racived rates need to formated as Json, and add each one as possible rates with a $0 value
+            location = resp;
+            location = JSON.parse(location);
+
+            location.forEach(function (place) {
+                location_rates.push({
+                    "line_text": place.name,
+                    "value": 0
+                });
+            });
+            res.send({
+                name: 'Pick up: ',
+                rates: location_rates,
+            });
+        })
+        .catch(err => {
+            //TODO: report error
+            console.log(err);
+            res.status(500).end();
+        });
+}
+
+function GetShippingRate(req, items, domain, platform, shop, res) {
+    const requestData = {
+        "order": {
+            "customer": {
+                "shipping_address": {
+                    "address": req.body.destination_address.address1,
+                    "city": req.body.destination_address.city,
+                    "country_code": req.body.destination_address.country_code,
+                    "province_code": req.body.destination_address.province_code,
+                    "postal_code": req.body.destination_address.postal_code
+                }
+            },
+            "items": items,
+        }
+    };
+
+    // request to bold checkout for the shipping rates that would apply for this order
+    request({
+        url: `https://${domain}/api/v1/${platform}/${shop}/shipping_lines`,
+        method: 'POST',
+        headers: {
+            "X-Bold-Checkout-Access-Token": process.env.Bold_checkout_acccess_token,
+        },
+        json: requestData,
+    })
+        .then(resp => {
+            //TODO: get the rates from checkout and set them in the override along with my own rate
+            var shipping_lines = new Array();
+            shipping_lines = Object.values(resp.shipping_lines);
+            var rates = new Array();
+            // get the rates that were fetched from checkout and format them for shipping override. 
+            shipping_lines.forEach(function (line) {
+                rates.push({
+                    "line_text": line.shipping.name,
+                    "value": (line.shipping.price / 100)
+                });
+            });
+            // submit the override to checkout. 
+            res.send({
+                name: 'My Custom Shipping Override',
+                rates: rates,
+            });
+        })
+        .catch(err => {
+            //TODO: report error
+            console.log(err);
+            res.status(500).end();
+        });
 }
 
 module.exports = app;
