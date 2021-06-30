@@ -10,18 +10,18 @@
 
 4. Install dependencies
     ```
-    $ yarn install
+    $ npm install
     ```
 
 5. Start the server
     ```
-    $ yarn start
+    $ npm start
     ```
 
 ## Running the tests
 
 ```
-$ yarn test
+$ npm test
 ```
 
 ## License
